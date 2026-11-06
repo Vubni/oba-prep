@@ -15,7 +15,7 @@
   const canonical = state => JSON.stringify(Object.fromEntries(Object.entries(state).sort(([a], [b]) => a.localeCompare(b))));
   const hash = async state => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical(state))))).map(n => n.toString(16).padStart(2, '0')).join('');
   const ownerKey = () => 'ryadom-sync-owner-v1:' + adapter().project;
-  const metaKey = () => 'ryadom-sync-v1:' + session.user.id + ':' + adapter().project;
+  const metaKey = (owner = session.user.id) => 'ryadom-sync-v1:' + owner + ':' + adapter().project;
   const pauseKey = () => 'ryadom-sync-paused-v1:' + adapter().project;
   const backupKey = () => 'ryadom-sync-backups-v1:' + adapter().project;
   const viewKey = () => 'ryadom-sync-view-v1:' + adapter().project;
@@ -65,14 +65,16 @@
   async function capture() {
     const state = snapshot(), owner = localStorage.getItem(ownerKey()), account = session?.user.id, generation = epoch;
     const paused = localStorage.getItem(pauseKey()), binding = session ? localStorage.getItem(metaKey()) : null;
+    const ownerBinding = owner ? localStorage.getItem(metaKey(owner)) : null, csrf = session?.csrf;
     const scope = storageScope();
-    return { state, text: canonical(state), hash: await hash(state), owner, account, generation, paused, binding, scope };
+    return { state, text: canonical(state), hash: await hash(state), owner, account, generation, paused, binding, ownerBinding, csrf, scope };
   }
   function assertBinding(start) {
     guard();
     if (start.scope !== storageScope()) throw Error('Способ входа изменился. Обе копии сохранены; открой профиль ещё раз.');
     if (start.generation !== epoch || start.account !== session?.user.id || start.owner !== localStorage.getItem(ownerKey())) throw Error('Профиль изменился. Открой его ещё раз.');
     if (start.paused !== localStorage.getItem(pauseKey()) || start.binding !== (session ? localStorage.getItem(metaKey()) : null)) throw Error('Синхронизация изменилась в другой вкладке. Прогресс этого устройства сохранён.');
+    if (start.aliasAdoption && (start.csrf !== session?.csrf || start.ownerBinding !== localStorage.getItem(metaKey(start.owner)) || !verifiedAlias(start.owner))) throw Error('Подтверждение профиля изменилось. Исходные записи сохранены.');
   }
   function assertCurrent(start) {
     assertBinding(start);
@@ -83,7 +85,26 @@
   }
   function metadata() {
     if (!session || localStorage.getItem(ownerKey()) !== session.user.id) return null;
-    try { const value = JSON.parse(localStorage.getItem(metaKey())); return value && (value.scope || 'local') === storageScope() && Number.isSafeInteger(value.revision) && value.revision >= 0 && /^[a-f0-9]{64}$/.test(value.hash) ? value : null; } catch { return null; }
+    return metadataFor(session.user.id);
+  }
+  function metadataFor(owner) {
+    try { const value = JSON.parse(localStorage.getItem(metaKey(owner))); return value && (value.scope || 'local') === storageScope() && Number.isSafeInteger(value.revision) && value.revision >= 0 && /^[a-f0-9]{64}$/.test(value.hash) ? value : null; } catch { return null; }
+  }
+  function verifiedAlias(owner) {
+    const id = /^[A-Za-z0-9_-]{1,128}$/;
+    return typeof owner === 'string' && owner !== session?.user.id && id.test(owner)
+      && Array.isArray(session?.canonicalAliases) && session.canonicalAliases.some(row => row
+        && Object.keys(row).sort().join(',') === 'from,mergeId,to' && row.from === owner && row.to === session.user.id
+        && typeof row.mergeId === 'string' && id.test(row.mergeId));
+  }
+  async function adoptAlias(start) {
+    // Old metadata only identifies an unchanged local cache. Its revision must
+    // never become the new canonical owner's write precondition.
+    start = { ...start, aliasAdoption: true }; assertCurrent(start);
+    await confirmAccount(start); assertCurrent(start);
+    const fresh = checkOwner(await request('state/' + adapter().project));
+    assertCurrent(start); validate(fresh.state);
+    await applySnapshot(fresh.state, fresh.revision, start);
   }
   function remember(revision, fingerprint) {
     // Write binding last. A failed metadata write must never authorize another owner.
@@ -173,8 +194,10 @@
       for (const key of adapter().keys) storage.removeItem(key);
       for (const [key, value] of Object.entries(state)) storage.setItem(key, value);
       assertBinding(start);
+      if (start.aliasAdoption && canonical(snapshot()) !== canonical(state)) throw Error('Браузер не сохранил общие записи. Исходная копия сохранена.');
       if (revision !== null) { remember(revision, fingerprint); localStorage.removeItem(pauseKey()); }
       else { if (key) localStorage.removeItem(key); localStorage.removeItem(ownerKey()); localStorage.setItem(pauseKey(), '1'); connected = false; }
+      if (start.aliasAdoption) { const saved = metadata(); if (!saved || saved.revision !== revision || saved.hash !== fingerprint) throw Error('Браузер не сохранил привязку. Исходная копия сохранена.'); }
     } catch {
       try {
         for (const key of adapter().keys) storage.removeItem(key);
@@ -201,7 +224,11 @@
     const start = await capture();
     remote = checkOwner(await request('state/' + adapter().project)); assertCurrent(start); validate(remote.state);
     const meta = metadata(), changedOwner = start.owner && start.owner !== session.user.id;
-    if (changedOwner && !empty(start.state)) { connected = false; choices('На устройстве остался прогресс другого профиля. Он не отправлен в новый аккаунт.'); return; }
+    if (changedOwner) {
+      const previous = metadataFor(start.owner);
+      if (verifiedAlias(start.owner) && (canonical(remote.state) === start.text || previous && previous.hash === start.hash)) { await adoptAlias(start); return; }
+      connected = false; choices('На устройстве остался прогресс другого профиля. Он не отправлен в новый аккаунт.'); return;
+    }
     if (canonical(remote.state) === start.text) { remember(remote.revision, start.hash); status('Сохранено'); return; }
     // An intentional local clear is an edit too. Never resurrect an older cloud copy.
     if (meta && start.hash !== meta.hash) {
