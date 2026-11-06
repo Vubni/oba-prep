@@ -1,0 +1,17 @@
+/* One document rhythm for the hub, profile and mounted subjects.
+   Links keep their native behaviour, including Back, downloads and new tabs. */
+html{background-color:var(--bg,#f6f8fc)}
+@media(prefers-reduced-motion:no-preference){
+ @view-transition{navigation:auto}
+ ::view-transition-group(root){animation-duration:160ms;animation-timing-function:ease-out}
+ ::view-transition-old(root){animation:ryadom-document-out 160ms ease-out both;mix-blend-mode:normal}
+ ::view-transition-new(root){animation:ryadom-document-in 160ms ease-out both;mix-blend-mode:normal}
+ body{animation:ryadom-document-arrive 140ms ease-out both}
+}
+@keyframes ryadom-document-out{to{opacity:0}}
+@keyframes ryadom-document-in{from{opacity:0}}
+@keyframes ryadom-document-arrive{from{opacity:.96}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){
+ @view-transition{navigation:none}
+ body,::view-transition-group(root),::view-transition-old(root),::view-transition-new(root){animation:none!important}
+}

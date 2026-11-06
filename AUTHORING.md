@@ -1,0 +1,8 @@
+# Authoring contract
+Public files contain original teaching explanations only. Never copy source documents, student work, personal names or course files into this repository.
+
+Lesson modules export `export const lessons = [...]`. Each lesson:
+`{id:'week01-product',week:1,title,description,minutes:25,visual:'product'|'market'|'operations'|'finance'|'bank'|'strategy',goals:[string],sections:[{id,title,html}],practice:[{id,prompt,type:'number'|'choice',answer:number|string,tolerance?:number,choices?:[{value,label}],explanation:string}],sourceNote:string}`.
+IDs are stable ASCII; level prefix is added by app/store. HTML is authored trusted static content. Formulas use `<span data-math="...TeX..."></span>` or `<div data-math="...TeX..."></div>`; no raw TeX displayed. Sections include introduction, original example/data, full method with definitions and calculations, interpretation and practice preparation. Tables use wrapper `.table-wrap`. SVGs use viewBox, labels and role=img. All explanatory sections visible. Practices are original, never source homework answers. Each practice has independently recalculable numeric answer or explicit choices. Source note short and general (e.g. «Темы недели 4: операции и здравоохранение.»), no private filenames/student data. No videos generated.
+
+Private coverage belongs outside this Git repo at sibling `oba-private`, including exact per-file/page/sheet mapping and explicit remaining gaps. Do not claim completeness without review. Modules: site/core-lessons.mjs and site/advanced-lessons.mjs. UI owner writes site/index.html, site/styles.css, site/app.mjs, site/visuals.mjs; root writes store, profile, methods, shared runtime copy, CI/tests.
