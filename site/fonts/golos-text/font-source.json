@@ -1,0 +1,24 @@
+{
+  "family": "Golos Text",
+  "license": "SIL Open Font License 1.1",
+  "upstream": "https://github.com/googlefonts/golos-text",
+  "commit": "cf2e27222937d97c2d858fff0499bcc667a64e9d",
+  "files": {
+    "GolosText-Medium.woff2": {
+      "sha256": "21cd58f9c4a0101753b52fa2e687a39119c9d6a19523a77c26bacf546a2c721c",
+      "bytes": 34408
+    },
+    "GolosText-SemiBold.woff2": {
+      "sha256": "32005098e00d1f0da853e533b3ac9c3fd775fd734f40951a81c6ab069ac4cae9",
+      "bytes": 34628
+    },
+    "GolosText-Bold.woff2": {
+      "sha256": "a73fd012f219c05ec50a21612ef80ee03af20b999e832a1164bb4e0048c4171c",
+      "bytes": 34552
+    },
+    "GolosText-Regular.woff2": {
+      "sha256": "f2152554816111e3a9f6d628ea8c04ec621ca01f0a9688d98845fae75cf5c44a",
+      "bytes": 33572
+    }
+  }
+}
