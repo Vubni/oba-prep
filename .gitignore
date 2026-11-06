@@ -1,0 +1,10 @@
+node_modules/
+dist/
+output/
+.runtime/
+.DS_Store
+*.zip
+*.pdf
+*.xlsx
+*.docx
+*.pptx
