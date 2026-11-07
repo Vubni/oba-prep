@@ -13,7 +13,8 @@
   const element = (tag, text, className) => { const el = document.createElement(tag); if (text) el.textContent = text; if (className) el.className = className; return el; };
   const button = (text, action, primary = false) => { const el = element('button', text, primary ? 'rp-primary' : ''); el.type = 'button'; el.addEventListener('click', () => run(action)); return el; };
   const canonical = state => JSON.stringify(Object.fromEntries(Object.entries(state).sort(([a], [b]) => a.localeCompare(b))));
-  const hash = async state => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical(state))))).map(n => n.toString(16).padStart(2, '0')).join('');
+  const hashText = async text => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))).map(n => n.toString(16).padStart(2, '0')).join('');
+  const hash = state => hashText(canonical(state));
   const ownerKey = () => 'ryadom-sync-owner-v1:' + adapter().project;
   const metaKey = (owner = session.user.id) => 'ryadom-sync-v1:' + owner + ':' + adapter().project;
   const pauseKey = () => 'ryadom-sync-paused-v1:' + adapter().project;
@@ -105,6 +106,43 @@
     const fresh = checkOwner(await request('state/' + adapter().project));
     assertCurrent(start); validate(fresh.state);
     await applySnapshot(fresh.state, fresh.revision, start);
+  }
+  async function importDirtyAlias(start) {
+    start = { ...start, aliasAdoption: true }; assertCurrent(start);
+    await confirmAccount(start); assertCurrent(start);
+    if (!session.aliasImportCourses?.includes(adapter().project)) throw Error('Автоматический перенос пока недоступен. Обе копии сохранены.');
+    const alias = session.canonicalAliases.find(row => row.from === start.owner && row.to === start.account);
+    const journalKey = 'ryadom-sync-alias-import-v1:' + adapter().project;
+    let encoded = localStorage.getItem(journalKey), pending;
+    if (encoded) {
+      pending = JSON.parse(encoded);
+      if (pending.course !== adapter().project || pending.alias?.from !== start.owner || pending.alias?.to !== start.account || pending.alias?.mergeId !== alias.mergeId) throw Error('Осталась незавершённая копия другого профиля. Скачай прогресс устройства.');
+      validate(pending.state);
+    } else {
+      const envelope = JSON.stringify({ app: 'ryadom-alias-import', schema: 1, project: adapter().project, alias, ownerMetadata: start.ownerBinding, state: start.state });
+      pending = { course: adapter().project, state: start.state, envelope, alias, revision: remote.revision,
+        operationId: await hash({ envelope, nonce: String(Date.now()) + ':' + String(Math.random()) }) };
+      assertCurrent(start); encoded = JSON.stringify(pending); localStorage.setItem(journalKey, encoded);
+      if (localStorage.getItem(journalKey) !== encoded) throw Error('Браузер не сохранил копию для переноса. Прогресс не изменён.');
+    }
+    // Stage exact bytes durably before POST. An uncertain response retries the
+    // same operation; it never becomes an unarchived replacement upload.
+    persistBackup(start.state); assertCurrent(start);
+    try {
+      const result = checkOwner(await request('unification/import-alias', pending));
+      if (result.receipt?.canonicalUserId !== start.account || result.receipt.operationId !== pending.operationId || result.receipt.retainedVariants !== 0 || result.receipt.snapshotHash !== await hash(pending.state) || result.receipt.envelopeHash !== await hashText(pending.envelope) || !Number.isSafeInteger(result.receipt?.revisions?.[adapter().project])) throw Error('Не удалось подтвердить перенос. Исходная копия сохранена.');
+      assertCurrent(start);
+      if (localStorage.getItem(journalKey) !== encoded) throw Error('Копия для переноса изменилась в другой вкладке. Прогресс сохранён.');
+      localStorage.removeItem(journalKey);
+      // Edits made after a previously staged operation need their own archive.
+      if (canonical(pending.state) !== start.text) { connected = false; status('Копия сохранена. Продолжаем перенос новых изменений.'); return; }
+      const fresh = checkOwner(await request('state/' + adapter().project)); assertCurrent(start); validate(fresh.state);
+      await applySnapshot(fresh.state, fresh.revision, start);
+    } catch (error) {
+      if (['CENTRAL_PROGRESS_CHANGED','EXPLICIT_CONFLICT_CHOICE_REQUIRED'].includes(error.message) && localStorage.getItem(journalKey) === encoded) localStorage.removeItem(journalKey);
+      if (error.message === 'EXPLICIT_CONFLICT_CHOICE_REQUIRED') { connected = false; choices('В заметках или черновиках есть разные записи. Обе копии сохранены; выбери, какую продолжить.'); return; }
+      throw error;
+    }
   }
   function remember(revision, fingerprint) {
     // Write binding last. A failed metadata write must never authorize another owner.
@@ -226,7 +264,9 @@
     const meta = metadata(), changedOwner = start.owner && start.owner !== session.user.id;
     if (changedOwner) {
       const previous = metadataFor(start.owner);
+      if (verifiedAlias(start.owner) && previous && localStorage.getItem('ryadom-sync-alias-import-v1:' + adapter().project) && session.aliasImportCourses?.includes(adapter().project) && typeof adapter()?.transport !== 'function') { await importDirtyAlias(start); return; }
       if (verifiedAlias(start.owner) && (canonical(remote.state) === start.text || previous && previous.hash === start.hash)) { await adoptAlias(start); return; }
+      if (verifiedAlias(start.owner) && previous && !empty(start.state) && session.aliasImportCourses?.includes(adapter().project) && typeof adapter()?.transport !== 'function') { await importDirtyAlias(start); return; }
       connected = false; choices('На устройстве остался прогресс другого профиля. Он не отправлен в новый аккаунт.'); return;
     }
     if (canonical(remote.state) === start.text) { remember(remote.revision, start.hash); status('Сохранено'); return; }
